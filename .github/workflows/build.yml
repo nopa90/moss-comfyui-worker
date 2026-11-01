@@ -1,0 +1,101 @@
+name: Build moss-comfyui worker
+
+# Builds runpod-workers/worker-comfyui at an upstream tag with COMFYUI_VERSION
+# overridden, then proves the MOSS node classes are present in the pushed image.
+#
+# Why: worker-comfyui 5.11.0 pins COMFYUI_VERSION=0.34.0. MOSS-Image core support
+# landed in 0.42.0 and the edit LoRAs (TextEncodeMOSSImageEdit) in 0.43.0, so the
+# stock worker image cannot run any MOSS graph. One build arg fixes it.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["README.md", "LICENSE"]
+  workflow_dispatch:
+    inputs:
+      comfyui_version:
+        description: ComfyUI version to bake in
+        default: "0.43.0"
+        required: true
+      worker_tag:
+        description: Upstream worker-comfyui tag
+        default: "5.11.0"
+        required: true
+
+env:
+  COMFYUI_VERSION: ${{ inputs.comfyui_version || '0.43.0' }}
+  WORKER_TAG: ${{ inputs.worker_tag || '5.11.0' }}
+  IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/moss-comfyui
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch upstream worker
+        run: |
+          git clone --depth 1 --branch "${WORKER_TAG}" \
+            https://github.com/runpod-workers/worker-comfyui upstream
+          echo "upstream $(git -C upstream rev-parse --short HEAD)"
+          grep -n '^ARG COMFYUI_VERSION' upstream/Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # the upstream tree IS the build context (its Dockerfile ADDs handler.py,
+          # src/start.sh, scripts/*), so point both context and file at it
+          context: ./upstream
+          file: ./upstream/Dockerfile
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            COMFYUI_VERSION=${{ env.COMFYUI_VERSION }}
+            CUDA_VERSION_FOR_COMFY=12.8
+          tags: |
+            ${{ env.IMAGE }}:${{ env.COMFYUI_VERSION }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull the pushed image
+        run: docker pull "${IMAGE}:${COMFYUI_VERSION}"
+
+      - name: ComfyUI version baked in
+        run: docker run --rm --entrypoint sh "${IMAGE}:${COMFYUI_VERSION}" -c 'cat /comfyui/comfyui_version.py'
+
+      - name: MOSS edit node imports (the real gate)
+        run: >-
+          docker run --rm --entrypoint /opt/venv/bin/python "${IMAGE}:${COMFYUI_VERSION}"
+          -c 'import comfy_extras.nodes_moss_image as m;
+          names=[x for x in dir(m) if "MOSS" in x.upper()];
+          print(sorted(names));
+          assert "TextEncodeMOSSImageEdit" in names, "missing TextEncodeMOSSImageEdit";'
+
+      - name: moss_image CLIP type registered
+        run: >-
+          docker run --rm --entrypoint sh "${IMAGE}:${COMFYUI_VERSION}"
+          -c 'grep -rl "moss_image" --include=*.py /comfyui/comfy | head -5'
