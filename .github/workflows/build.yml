@@ -111,7 +111,7 @@ jobs:
 
       - name: MOSS edit node imports (the real gate)
         run: >-
-          docker run --rm --entrypoint /opt/venv/bin/python "${IMAGE}:${COMFYUI_VERSION}"
+          docker run --rm -w /comfyui --entrypoint /opt/venv/bin/python "${IMAGE}:${COMFYUI_VERSION}"
           -c 'import comfy_extras.nodes_moss_image as m;
           names=[x for x in dir(m) if "MOSS" in x.upper()];
           print(sorted(names));
@@ -119,5 +119,5 @@ jobs:
 
       - name: moss_image CLIP type registered
         run: >-
-          docker run --rm --entrypoint sh "${IMAGE}:${COMFYUI_VERSION}"
-          -c 'grep -rl "moss_image" --include=*.py /comfyui/comfy | head -5'
+          docker run --rm -w /comfyui --entrypoint sh "${IMAGE}:${COMFYUI_VERSION}"
+          -c 'grep -rl "moss_image" --include=*.py comfy | head -5'
