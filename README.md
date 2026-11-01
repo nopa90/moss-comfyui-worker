@@ -30,7 +30,8 @@ is forked, so upstream fixes, dependency pins and the build-time
 | Base | `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04` |
 | Upstream worker | `runpod-workers/worker-comfyui` @ `5.11.0` (override with `worker_tag`) |
 | ComfyUI | **0.43.0** (override with `comfyui_version`) |
-| Image | `<DOCKERHUB_USERNAME>/moss-comfyui:0.43.0`, `:latest`, `:<sha>` |
+| Image | `ghcr.io/nopa90/moss-comfyui:0.43.0`, `:latest`, `:<sha>` |
+| Registry auth | the run's own `GITHUB_TOKEN` — **no repo secrets, no Docker Hub account** |
 | Custom nodes | none — MOSS support is core |
 
 The `verify` job pulls the pushed image and asserts, inside it:
@@ -40,31 +41,27 @@ The `verify` job pulls the pushed image and asserts, inside it:
 
 A green run therefore proves the image can load the graph, not just that Docker exited 0.
 
-## Repo secrets required
+## Registry
 
-| Secret | Value |
-|---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub account (same one used by `voxcpm2-runpod`) |
-| `DOCKERHUB_TOKEN` | Docker Hub access token with read/write |
+Pushes to **GHCR** (`ghcr.io/nopa90/moss-comfyui`) using the automatic
+`GITHUB_TOKEN` with `packages: write` — nothing to configure, no secrets.
 
-```bash
-gh secret set DOCKERHUB_USERNAME --body '<username>'
-gh secret set DOCKERHUB_TOKEN    --body '<token>'
-```
+After the first successful push, make the package **public** once so Runpod can pull it
+anonymously (GitHub → your profile → Packages → `moss-comfyui` → Settings → Danger Zone →
+Change visibility → Public). If you prefer to keep it private, add Runpod registry
+credentials instead with `create-container-registry-auth` (GHCR, a read-only PAT with
+`read:packages`).
 
 ## Setup, once
 
 ```bash
-gh auth login
+gh auth login                      # needs repo + workflow scopes
 gh repo create moss-comfyui-worker --public --source=. --remote=origin --push
-gh secret set DOCKERHUB_USERNAME --body '<username>'
-gh secret set DOCKERHUB_TOKEN --body '<token>'
-gh workflow run build.yml            # or just push to main
-gh run watch
+gh run watch                       # or just push to main
 ```
 
 Public repo so Actions minutes are unmetered — the CUDA + torch build is heavy and the
-image is public on Docker Hub anyway.
+image is public anyway.
 
 ## Weight layout on the network volume
 
@@ -121,7 +118,7 @@ MOSS core needs none, but the `rapid-moss` (4/8-step) and `armV5` LoRA lanes do.
 come from a volume — bake them in a derived Dockerfile:
 
 ```dockerfile
-FROM <DOCKERHUB_USERNAME>/moss-comfyui:0.43.0
+FROM ghcr.io/nopa90/moss-comfyui:0.43.0
 RUN comfy-node-install <node-id-or-git-url>
 ```
 
